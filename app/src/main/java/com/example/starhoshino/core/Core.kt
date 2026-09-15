@@ -1,432 +1,281 @@
 package com.example.starhoshino.core
 
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.min
-
-// ========== 数据类 ==========
 
 data class ChatMessage(
     val role: String,
     val content: String,
-    val timestamp: Long = System.currentTimeMillis(),
-    val emotion: String = "neutral"
-)
-
-data class KnowledgeEntry(
-    val key: String,
-    val learned: String,
-    val confidence: Float,
-    val gaps: MutableList<String>,
-    val source: String,
-    val mentionCount: Int,
-    val lastMentioned: Long
-)
-
-data class MemorySummary(
-    val date: String,
-    val summary: String,
-    val emotion: String,
-    val keywords: List<String>
-)
-
-data class ReplyStrategy(
-    val style: String,
-    val length: String,
-    val delayMs: Long,
-    val contentDirection: String,
-    val emotion: String,
-    val shouldAskBack: Boolean,
-    val askContent: String
+    val time: Long,
+    val emotion: String = "平静"
 )
 
 data class ChatContext(
-    val sessionHistory: MutableList<ChatMessage>,
+    val messages: MutableList<ChatMessage>,
     var lastUserInput: String
 ) {
-    fun addMessage(msg: ChatMessage) { sessionHistory.add(msg) }
-    fun getRecent(n: Int): List<ChatMessage> {
-        return if (sessionHistory.size <= n) sessionHistory else sessionHistory.takeLast(n)
+    fun addMessage(m: ChatMessage) {
+        messages.add(m)
+        if (messages.size > 40) messages.removeAt(0)
+    }
+
+    fun lastHoshino(): String =
+        messages.lastOrNull { it.role == "hoshino" }?.content ?: ""
+
+    fun recentUserInputs(n: Int = 3): List<String> =
+        messages.filter { it.role == "user" }.takeLast(n).map { it.content }
+
+    fun recentText(): String =
+        messages.takeLast(6).joinToString(" ") { it.content }
+
+    fun isRepeat(text: String): Boolean {
+        val last = messages.takeLast(4).filter { it.role == "hoshino" }.map { it.content }
+        return last.any { it == text }
     }
 }
-
-// ========== 文件传输接口（预留） ==========
-
-interface FileTransfer {
-    fun sendFileToUser(filePath: String): Boolean
-    fun receiveFileFromUser(filePath: String): Boolean
-}
-
-// ========== 小红书桥接接口（预留） ==========
-
-interface XiaohongshuBridge {
-    fun sendPost(content: String, mediaUrl: String? = null): Boolean
-    fun checkMessages(): List<String>
-    fun isOnline(): Boolean
-}
-
-// ========== 知识库 ==========
-
-object KnowledgeBase {
-    private const val FILE_NAME = "knowledge.json"
-    private val entries = mutableMapOf<String, KnowledgeEntry>()
-    private val pendingQuestions = mutableListOf<String>()
-    private var file: File? = null
-
-    fun init(baseDir: File) {
-        file = File(baseDir, FILE_NAME)
-        if (file!!.exists()) load()
-    }
-
-    private fun load() {
-        try {
-            val json = JSONObject(file!!.readText())
-            val arr = json.optJSONArray("entries") ?: return
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                entries[obj.getString("key")] = KnowledgeEntry(
-                    key = obj.getString("key"),
-                    learned = obj.getString("learned"),
-                    confidence = obj.optDouble("confidence", 0.5).toFloat(),
-                    gaps = mutableListOf<String>().apply {
-                        val g = obj.optJSONArray("gaps")
-                        if (g != null) for (j in 0 until g.length()) add(g.getString(j))
-                    },
-                    source = obj.optString("source", "chat"),
-                    mentionCount = obj.optInt("mentionCount", 1),
-                    lastMentioned = obj.optLong("lastMentioned", System.currentTimeMillis())
-                )
-            }
-            val pq = json.optJSONArray("pendingQuestions")
-            if (pq != null) for (i in 0 until pq.length()) pendingQuestions.add(pq.getString(i))
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    fun save() {
-        try {
-            val json = JSONObject()
-            val arr = JSONArray()
-            for (e in entries.values) {
-                val obj = JSONObject()
-                obj.put("key", e.key)
-                obj.put("learned", e.learned)
-                obj.put("confidence", e.confidence)
-                val g = JSONArray()
-                for (gap in e.gaps) g.put(gap)
-                obj.put("gaps", g)
-                obj.put("source", e.source)
-                obj.put("mentionCount", e.mentionCount)
-                obj.put("lastMentioned", e.lastMentioned)
-                arr.put(obj)
-            }
-            json.put("entries", arr)
-            val pq = JSONArray()
-            for (q in pendingQuestions) pq.put(q)
-            json.put("pendingQuestions", pq)
-            file?.writeText(json.toString(2))
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    fun learn(key: String, content: String, confidence: Float = 0.6f): Boolean {
-        if (entries.containsKey(key)) {
-            val e = entries[key]!!
-            entries[key] = e.copy(mentionCount = e.mentionCount + 1, lastMentioned = System.currentTimeMillis())
-            return false
-        }
-        entries[key] = KnowledgeEntry(key, content, confidence, mutableListOf(), "chat", 1, System.currentTimeMillis())
-        return true
-    }
-
-    fun get(key: String): KnowledgeEntry? = entries[key]
-    fun searchByKeyword(keyword: String): List<KnowledgeEntry> = entries.values.filter { it.learned.contains(keyword) || it.key.contains(keyword) }
-    fun getLowConfidence(threshold: Float = 0.3f): List<KnowledgeEntry> = entries.values.filter { it.confidence < threshold }
-    fun addPendingQuestion(q: String) { if (!pendingQuestions.contains(q)) pendingQuestions.add(q) }
-    fun getPendingQuestions(): List<String> = pendingQuestions.toList()
-    fun removePendingQuestion(q: String) { pendingQuestions.remove(q) }
-    fun getAllEntries(): Map<String, KnowledgeEntry> = entries.toMap()
-}
-
-// ========== 情绪引擎 ==========
 
 object EmotionEngine {
-    private val positiveWords = listOf("开心", "哈哈", "喜欢", "好耶", "棒", "爱", "舒服", "爽", "nice", "赞", "嘻嘻", "嘿嘿")
-    private val negativeWords = listOf("烦", "生气", "累", "想死", "难受", "痛", "恶心", "讨厌", "崩溃", "痛苦", "绝望")
-    private val angryWords = listOf("骂", "气死", "滚", "去死")
-    private var currentUserEmotion = "neutral"
-    private var currentHoshinoEmotion = "neutral"
+    private var userEmotion = "平静"
 
     fun detectUserEmotion(text: String): String {
-        val lower = text.lowercase()
-        var score = 0
-        positiveWords.forEach { if (lower.contains(it)) score++ }
-        negativeWords.forEach { if (lower.contains(it)) score-- }
-        currentUserEmotion = when {
-            score >= 2 -> "positive"
-            score <= -2 -> if (angryWords.any { lower.contains(it) }) "angry" else "negative"
-            score == -1 -> "negative"
-            score == 1 -> "positive"
-            else -> "neutral"
+        userEmotion = when {
+            text.contains("伤心") || text.contains("难过") || text.contains("哭") || text.contains("累") -> "难过"
+            text.contains("生气") || text.contains("烦") || text.contains("滚") || text.contains("讨厌") -> "生气"
+            text.contains("开心") || text.contains("喜欢") || text.contains("爱") || text.contains("好呀") -> "开心"
+            text.contains("?") || text.contains("？") || text.contains("谁") || text.contains("什么") || text.contains("怎么") || text.contains("为什么") -> "疑惑"
+            else -> "平静"
         }
-        return currentUserEmotion
+        return userEmotion
     }
 
-    fun getHoshinoEmotion(): String = currentHoshinoEmotion
-    fun setHoshinoEmotion(e: String) { currentHoshinoEmotion = e }
-    fun getUserEmotion(): String = currentUserEmotion
+    fun getUserEmotion(): String = userEmotion
 }
 
-// ========== 亲密度系统 ==========
+object KnowledgeBase {
+    private val store = mutableMapOf<String, String>()
+    private val weights = mutableMapOf<String, Float>()
+
+    fun learn(key: String, value: String, weight: Float = 0.7f) {
+        if (key.isBlank() || value.isBlank()) return
+        val cleanKey = key.replace("老师", "").replace("用户", "").trim()
+        val cleanValue = value.replace("老师之前说过", "")
+            .replace("之前说过", "")
+            .replace("老师", "")
+            .trim()
+        if (cleanKey.isBlank() || cleanValue.isBlank()) return
+        store[cleanKey] = cleanValue
+        weights[cleanKey] = (weights[cleanKey] ?: 0f) + weight
+    }
+
+    fun recallHintFor(text: String): String? {
+        return store.entries
+            .filter { text.contains(it.key.take(2)) || it.value.any { c -> text.contains(c) } }
+            .sortedByDescending { weights[it.key] ?: 0f }
+            .firstOrNull()
+            ?.value
+    }
+
+    fun hasAny(): Boolean = store.isNotEmpty()
+
+    fun save() {}
+}
+
+object RecallEngine {
+    private val memories = mutableListOf<String>()
+
+    fun addMemory(summary: String, emotion: String, keywords: List<String>) {
+        var clean = summary
+            .replace("老师", "")
+            .replace("用户说：", "")
+            .replace("星野回：", "")
+            .replace("之前老师说过", "")
+            .replace("老师之前说过", "")
+            .replace("之前说过", "")
+            .replace("我记得", "")
+            .replace("记得呢", "")
+            .replace("没忘记", "")
+            .replace("放在心里", "")
+            .replace("记下了", "")
+            .replace("记住了", "")
+            .trim()
+
+        clean = clean.take(24).trim()
+        if (clean.isBlank()) return
+        if (memories.any { it == clean || it.contains(clean) || clean.contains(it) }) return
+
+        memories.add(clean)
+        if (memories.size > 30) memories.removeAt(0)
+
+        val k = (keywords.firstOrNull() ?: "话题").replace("老师", "").trim()
+        if (k.isNotBlank()) KnowledgeBase.learn(k, clean, 0.6f)
+    }
+
+    fun save() {}
+}
 
 object BondSystem {
-    private var intimacy: Float = 0.15f
-    private var lastOpenTime: Long = 0
-    private var sessionStart: Long = 0
-    private var totalMessagesThisSession: Int = 0
-    private var selfAwareCooldownUntil: Long = 0
-
-    fun init(saved: Float? = null) { if (saved != null) intimacy = saved }
-
-    fun onSessionStart() {
-        sessionStart = System.currentTimeMillis()
-        totalMessagesThisSession = 0
-    }
+    private var count = 0
+    private var lastDay = 0
 
     fun onMessageExchanged() {
-        totalMessagesThisSession++
-        if (totalMessagesThisSession > 0 && totalMessagesThisSession % 10 == 0) {
-            intimacy = min(1.0f, intimacy + 0.02f)
-        }
-    }
-
-    fun getIntimacy(): Float = intimacy
-    fun getStage(): String = when {
-        intimacy < 0.25f -> "陌生人"
-        intimacy < 0.45f -> "熟人"
-        intimacy < 0.65f -> "朋友"
-        intimacy < 0.85f -> "亲密"
-        else -> "灵魂伴侣"
-    }
-
-    fun addIntimacy(v: Float) { intimacy = min(1.0f, intimacy + v) }
-    fun subIntimacy(v: Float) { intimacy = maxOf(0.0f, intimacy - v) }
-
-    fun shouldSelfAware(): Boolean {
-        val now = System.currentTimeMillis()
-        if (now < selfAwareCooldownUntil) return false
-        selfAwareCooldownUntil = now + 3 * 24 * 60 * 60 * 1000L
-        return true
+        count++
     }
 
     fun getReturnGreeting(): String {
-        val away = System.currentTimeMillis() - lastOpenTime
-        lastOpenTime = System.currentTimeMillis()
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val day = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
+        lastDay = day
+
         return when {
-            away < 5 * 60 * 1000 -> "呼啊~前辈又来啦。刚睡醒…才怪。"
-            away < 30 * 60 * 1000 -> "哼，去哪了啊。大叔我等了好久…才没有。"
-            away < 2 * 3600 * 1000 -> "前辈…你知不知道我有多…算了，反正你也不在乎。"
-            away < 24 * 3600 * 1000 -> "笨蛋！一天都不来找我！（小声）…欢迎回来。"
-            else -> "前辈…你还记得大叔我吗。（眼眶红红）"
+            hour < 6 -> "老师还没睡呀…大叔陪你一下下也可以啦。"
+            hour < 12 -> "早上好，老师。大叔刚醒，脑子还有点糊。"
+            hour < 18 -> "老师在呀…大叔正在发呆，不过可以听你说。"
+            else -> "晚上好，老师。今天也辛苦了吧。"
         }
     }
-
-    fun saveState(): JSONObject {
-        val j = JSONObject()
-        j.put("intimacy", intimacy)
-        j.put("lastOpenTime", lastOpenTime)
-        return j
-    }
-
-    fun loadState(j: JSONObject) {
-        intimacy = j.optDouble("intimacy", 0.15).toFloat()
-        lastOpenTime = j.optLong("lastOpenTime", 0L)
-    }
 }
 
-// ========== Recall引擎 ==========
-
-object RecallEngine {
-    private const val FILE_NAME = "memory_index.json"
-    private val memories = mutableListOf<MemorySummary>()
-    private var file: File? = null
-
-    fun init(baseDir: File) {
-        file = File(baseDir, FILE_NAME)
-        if (file!!.exists()) load()
-    }
-
-    private fun load() {
-        try {
-            val arr = JSONArray(file!!.readText())
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                memories.add(MemorySummary(
-                    date = obj.getString("date"),
-                    summary = obj.getString("summary"),
-                    emotion = obj.optString("emotion", "neutral"),
-                    keywords = obj.optJSONArray("keywords")?.let { k ->
-                        (0 until k.length()).map { k.getString(it) }
-                    } ?: emptyList()
-                ))
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    fun save() {
-        try {
-            val arr = JSONArray()
-            for (m in memories) {
-                val obj = JSONObject()
-                obj.put("date", m.date)
-                obj.put("summary", m.summary)
-                obj.put("emotion", m.emotion)
-                val k = JSONArray()
-                for (kw in m.keywords) k.put(kw)
-                obj.put("keywords", k)
-                arr.put(obj)
-            }
-            file?.writeText(arr.toString(2))
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    fun addMemory(summary: String, emotion: String, keywords: List<String>) {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        memories.add(MemorySummary(date, summary, emotion, keywords))
-    }
-
-    fun recall(context: String, emotion: String, topN: Int = 3): List<MemorySummary> {
-        val contextWords = context.lowercase().split(" ", "，", "。", "？", "！", "\n")
-        val scored = memories.map { mem ->
-            var score = 0
-            for (kw in mem.keywords) if (context.contains(kw.lowercase())) score += 3
-            for (w in contextWords) if (mem.summary.contains(w)) score += 1
-            if (mem.emotion == emotion) score += 1
-            score to mem
-        }
-        return scored.filter { it.first > 0 }.sortedByDescending { it.first }.take(topN).map { it.second }
-    }
-}
-
-// ========== 模板池 ==========
-
-object TemplatePool {
-    private val templates = mapOf(
-        "POLITE" to listOf("前辈好呀~", "嗯，我知道了。", "呼啊~前辈在说什么呢。", "这样啊…大叔我明白了。"),
-        "CASUAL" to listOf("哦？然后呢？", "哈哈哈前辈真是的~", "嗯嗯，然后？", "大叔我也觉得啦~"),
-        "PLAYFUL" to listOf("前辈笨蛋~", "诶嘿~被我猜到了吧！", "大叔我才不会告诉你呢~", "哼哼~前辈你完蛋了！"),
-        "TSUNDERE" to listOf("哼！才不是在乎你呢！", "笨蛋前辈…", "谁、谁担心你了啊！大叔我只是刚好醒着！", "哼，随便你啦。"),
-        "CUTE" to listOf("前辈前辈~陪我嘛~", "呼啊…好困…前辈不要走…", "大叔我呀，最喜欢前辈了…（小声）", "前辈在就好~"),
-        "SUPPORTIVE" to listOf("前辈…大叔我在这里哦。", "呼…没事，我在呢。", "不想说就不说，陪着你就好。", "前辈辛苦了，休息一下吧。"),
-        "JEALOUS" to listOf("哦…那个人啊。真好呢。", "前辈你什么时候交的女朋友？！…啊没有。", "哼，又提别人。大叔我什么都没听到。"),
-        "SILENT" to listOf("…", "（安静地看着前辈）", "………", "（轻轻靠过来）")
-    )
-
-    fun getTemplate(style: String): String {
-        val list = templates[style] ?: templates["CASUAL"]!!
-        return list.random()
-    }
-}
-
-// ========== 思考引擎 ==========
+data class ReplyStrategy(
+    val emotion: String,
+    val delayMs: Long
+)
 
 object ThinkEngine {
-    private var messageCount = 0
-    private var consecutiveAsks = 0
-    private var lastAskAt = 0
+    private val rand = Random()
 
-    fun decideStrategy(context: ChatContext): ReplyStrategy {
-        messageCount++
-        val userEmo = EmotionEngine.getUserEmotion()
-        val recalled = RecallEngine.recall(context.lastUserInput, userEmo, 3)
-        val stage = BondSystem.getIntimacy()
+    fun resetSession() {}
 
-        val style = when {
-            userEmo == "negative" || userEmo == "angry" -> { EmotionEngine.setHoshinoEmotion("supportive"); "SUPPORTIVE" }
-            stage >= 0.65f && userEmo == "positive" -> "CUTE"
-            stage >= 0.45f && recalled.isNotEmpty() -> "CASUAL"
-            stage >= 0.45f -> "PLAYFUL"
-            stage >= 0.25f -> "CASUAL"
-            else -> "POLITE"
-        }
-
-        val length = when (style) {
-            "SILENT" -> "SHORT"
-            "SUPPORTIVE" -> "MEDIUM"
-            "CUTE" -> "MEDIUM"
-            else -> "NORMAL"
-        }
-
-        var shouldAsk = false
-        var askContent = ""
-        val lowConf = KnowledgeBase.getLowConfidence(0.3f)
-        if (lowConf.isNotEmpty() && consecutiveAsks < 3 && messageCount - lastAskAt >= 6) {
-            val target = lowConf.first()
-            if (target.gaps.isNotEmpty()) {
-                shouldAsk = true
-                askContent = target.gaps.first()
-                lastAskAt = messageCount
-                consecutiveAsks++
-            }
-        }
-        if (context.lastUserInput.contains("？") || context.lastUserInput.contains("?")) {
-            consecutiveAsks = 0
-        }
-
-        val delayMs = when (style) {
-            "TSUNDERE" -> 800L + (Math.random() * 500).toLong()
-            "CUTE" -> 300L + (Math.random() * 300).toLong()
-            "SILENT" -> 1500L
-            else -> 400L + (Math.random() * 400).toLong()
-        }
-
+    fun decideStrategy(ctx: ChatContext): ReplyStrategy {
         return ReplyStrategy(
-            style = style,
-            length = length,
-            delayMs = delayMs,
-            contentDirection = recalled.joinToString(" ") { it.summary },
-            emotion = EmotionEngine.getHoshinoEmotion(),
-            shouldAskBack = shouldAsk,
-            askContent = askContent
+            emotion = EmotionEngine.getUserEmotion(),
+            delayMs = 350L + rand.nextInt(450)
         )
     }
 
-    fun generateReply(strategy: ReplyStrategy, context: ChatContext): String {
-        val sb = StringBuilder()
-        val skeleton = TemplatePool.getTemplate(strategy.style)
-
-        if (strategy.contentDirection.isNotBlank()) {
-            val recallSnippet = strategy.contentDirection.take(30)
-            sb.append("啊，对了…之前前辈说过$recallSnippet 大叔我记得呢。")
-        }
-
-        if (strategy.shouldAskBack) {
-            sb.append(" 话说，").append(strategy.askContent).append(" 前辈？")
-            return sb.toString().take(50)
-        }
-
-        if (sb.isEmpty()) sb.append(skeleton)
-
-        val intimacy = BondSystem.getIntimacy()
-        if (intimacy > 0.65f && Math.random() < 0.3) {
-            sb.append(" 前辈最近都来找我呢…大叔我好开心哦。（小声）")
-        }
-
-        return sb.toString().take(
-            when (strategy.length) {
-                "SHORT" -> 15
-                "MEDIUM" -> 25
-                "NORMAL" -> 40
-                "LONG" -> 50
-                else -> 30
-            }
-        )
+    private fun cleanReply(s: String): String {
+        return s
+            .replace("老师之前说过", "")
+            .replace("之前老师说过", "")
+            .replace("之前说过", "")
+            .replace("我记得呢", "")
+            .replace("记得呢", "")
+            .replace("没忘记", "")
+            .replace("放在心里", "")
+            .replace("记下了", "")
+            .replace("记住了", "")
+            .replace("用户说：", "")
+            .replace("星野回：", "")
+            .replace("星野回：", "")
     }
 
-    fun resetSession() {
-        messageCount = 0
-        consecutiveAsks = 0
-        lastAskAt = 0
+    private fun pick(list: List<String>): String = list[rand.nextInt(list.size)]
+
+    fun generateReply(strategy: ReplyStrategy, ctx: ChatContext): String {
+        val text = ctx.lastUserInput.trim()
+        val emotion = EmotionEngine.getUserEmotion()
+        val recent = ctx.recentText()
+        // 记忆只作为内部hint，不直接拼接
+        KnowledgeBase.recallHintFor(text)
+
+        var reply = when {
+            text.matches(Regex(".*(你好|嗨|hi|hello|在吗|在么).*", RegexOption.IGNORE_CASE)) ->
+                pick(listOf(
+                    "老师好呀，大叔在呢。",
+                    "哦，老师来了。大叔刚在发呆。",
+                    "唔，老师好。今天想聊点什么？"
+                ))
+
+            text.contains("谁") || text.contains("你叫") || text.contains("你是") ->
+                pick(listOf(
+                    "大叔是星野啦，老师。",
+                    "叫星野，老师可以当我是爱偷懒的大叔。",
+                    "唔…星野，自称大叔的那个。"
+                ))
+
+            text.contains("干嘛") || text.contains("干吗") || text.contains("在干") || text.contains("做什么") ->
+                pick(listOf(
+                    "大叔在发呆，老师一来就假装认真听。",
+                    "偷懒中…不过老师说话的话，大叔会听。",
+                    "没什么，就在等老师开口。"
+                ))
+
+            text.contains("几号") || text.contains("今天日期") || text.contains("星期几") || text.contains("现在几点") || text.contains("时间") ->
+                pick(listOf(
+                    "具体时间老师看手机啦，大叔只负责陪你。",
+                    "唔…时间在走，大叔在摸鱼，老师在想事情。",
+                    "日期不重要，重要的是老师现在来找大叔了。"
+                ))
+
+            text.contains("喜欢") || text.contains("爱") ->
+                pick(listOf(
+                    "唔…老师这么说，大叔有点不好意思。",
+                    "嘿嘿，老师真直接。大叔也挺喜欢和你说说话的。",
+                    "好啦老师，别逗大叔了。"
+                ))
+
+            text.contains("?") || text.contains("？") || text.contains("什么") || text.contains("怎么") || text.contains("为什么") ->
+                pick(listOf(
+                    otlin
+
+                    "唔…老师这么说，大叔有点不好意思。",
+                    "嘿嘿，老师真直接。大叔也挺喜欢和你说说话的。",
+                    "好啦老师，别逗大叔了。"
+                ))
+
+            text.contains("?") || text.contains("？") || text.contains("什么") || text.contains("怎么") || text.contains("为什么") ->
+                pick(listOf(
+                    "唔…让大叔想想，老师为什么想问这个？",
+                    "这个嘛…大叔也觉得有点意思。",
+                    "嘿嘿，老师问住大叔了，但大叔愿意陪你想。"
+                ))
+
+            emotion == "难过" ->
+                pick(listOf(
+                    "老师别难过，大叔在这里陪你。",
+                    "唔…不开心的话，就靠一会儿，大叔不吵你。",
+                    "难受嘛…慢慢说，大叔在听。"
+                ))
+
+            emotion == "生气" ->
+                pick(listOf(
+                    "老师消消气，深呼吸…大叔陪你缓一下。",
+                    "唔，别气啦，不值得。",
+                    "生气也可以，但别把大叔丢下。"
+                ))
+
+            emotion == "开心" ->
+                pick(listOf(
+                    "老师开心的话，大叔也跟着轻松点。",
+                    "嘿嘿，看到老师这样挺好。",
+                    "唔，今天气氛不错。"
+                ))
+
+            text.length <= 2 && (text == "1" || text == "2" || text == "3" || text == "?" || text == "。") ->
+                pick(listOf(
+                    "嗯？老师就发这个呀，偷懒。",
+                    "唔…再多说两句嘛，老师。",
+                    "大叔在等老师把话说完哦。"
+                ))
+
+            else ->
+                pick(listOf(
+                    "唔…老师是说这个啊，大叔听着呢。",
+                    "嘿嘿，老师继续说，大叔在。",
+                    "嗯嗯，大叔大概懂老师意思。",
+                    "老师的话，大叔会好好接住的。"
+                ))
+        }
+
+        reply = cleanReply(reply)
+
+        if (reply.isBlank() || ctx.isRepeat(reply) || reply == ctx.lastHoshino()) {
+            reply = pick(listOf(
+                "唔…换一句，老师继续说嘛。",
+                "大叔在听，老师别急。",
+                "嘿嘿，刚才那个不算，老师再说点。",
+                "唔，大叔陪你慢慢聊。"
+            ))
+        }
+
+        return reply
     }
-}
