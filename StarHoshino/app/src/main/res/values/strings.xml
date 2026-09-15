@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StarHoshino</string>
+    <string name="settings">设置</string>
+    <string name="soul_test">灵魂测试</string>
+    <string name="hint_input">说点什么吧…</string>
+    <string name="send">发送</string>
+    <string name="permission_title">前辈~需要几个小权限哦</string>
+    <string name="permission_msg">不会乱用的啦，放心点允许嘛🥺</string>
+</resources>
