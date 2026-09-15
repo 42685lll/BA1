@@ -3,6 +3,7 @@ package com.example.starhoshino.ui
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -127,6 +128,7 @@ class SoulTestActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         )
         params.setMargins(16, 8, 16, 8)
+
         bubble.layoutParams = params
         bubble.setPadding(24, 16, 24, 16)
         bubble.text = text
@@ -135,16 +137,16 @@ class SoulTestActivity : AppCompatActivity() {
         if (isUser) {
             bubble.setBackgroundResource(R.drawable.bubble_user)
             bubble.setTextColor(0xFFFFFFFF.toInt())
-            (bubble.layoutParams as LinearLayout.LayoutParams).gravity = android.view.Gravity.END
+            (bubble.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.END
         } else {
             bubble.setBackgroundResource(R.drawable.bubble_hoshino)
             bubble.setTextColor(0xFFFFFFFF.toInt())
-            (bubble.layoutParams as LinearLayout.LayoutParams).gravity = android.view.Gravity.START
+            (bubble.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.START
         }
 
         chatContainer.addView(bubble)
-        scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }
-}
+        scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN)
+        }
 
     override fun onDestroy() {
         super.onDestroy()
