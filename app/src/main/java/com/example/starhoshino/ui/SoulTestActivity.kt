@@ -24,7 +24,7 @@ class SoulTestActivity : AppCompatActivity() {
     private lateinit var btnAdd: ImageButton
     private lateinit var tvStatus: TextView
 
-    private val chatContext = ChatContext(mutableListOf(), "")
+    private lateinit var chatContext: ChatContext
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,23 +38,28 @@ class SoulTestActivity : AppCompatActivity() {
         btnAdd = findViewById(R.id.btnAdd)
         tvStatus = findViewById(R.id.tvStatus)
 
+        chatContext = ChatContext(mutableListOf(), "")
+
         btnSend.setOnClickListener {
             val text = inputText.text.toString().trim()
-            if (text.isNotEmpty()) { sendMessage(text); inputText.setText("") }
+            if (text.isNotEmpty()) {
+                sendMessage(text)
+                inputText.setText("")
+            }
         }
 
         btnAdd.setOnClickListener {
             Toast.makeText(this, "文件功能预留中~", Toast.LENGTH_SHORT).show()
         }
 
-        val greeting = BondSystem.getReturnGreeting()
-        addBubble(greeting, isUser = false)
+        addBubble(BondSystem.getReturnGreeting(), isUser = false)
 
         ThinkEngine.resetSession()
     }
 
     private fun sendMessage(text: String) {
         addBubble(text, isUser = true)
+
         EmotionEngine.detectUserEmotion(text)
         extractKnowledge(text)
 
@@ -64,7 +69,27 @@ class SoulTestActivity : AppCompatActivity() {
         val strategy = ThinkEngine.decideStrategy(chatContext)
 
         handler.postDelayed({
-            val reply = ThinkEngine.generateReply(strategy, chatContext)
+            var reply = ThinkEngine.generateReply(strategy, chatContext)
+
+            reply = reply
+                .replace("老师之前说过", "")
+                .replace("之前老师说过", "")
+                .replace("之前说过", "")
+                .replace("我记得呢", "")
+                .replace("记得呢", "")
+                .replace("没忘记", "")
+                .replace("放在心里", "")
+                .replace("记下了", "")
+                .replace("记住了", "")
+                .replace("用户说：", "")
+                .replace("星野回：", "")
+                .trimEnd('~', '。', '，', '.', ',', ' ')
+                .trim()
+
+            if (reply.isBlank() || reply == chatContext.lastHoshino()) {
+                reply = "唔…老师继续说嘛，大叔在听。"
+            }
+
             addBubble(reply, isUser = false)
             chatContext.addMessage(ChatMessage("hoshino", reply, System.currentTimeMillis(), strategy.emotion))
             BondSystem.onMessageExchanged()
@@ -79,14 +104,17 @@ class SoulTestActivity : AppCompatActivity() {
 
     private fun extractKnowledge(text: String) {
         val patterns = mapOf(
-            "我喜欢" to "喜好", "我叫" to "名字", "我今年" to "年龄",
-            "我是" to "身份", "我最" to "偏好"
+            "我喜欢" to "喜好",
+            "我叫" to "名字",
+            "我今年" to "年龄",
+            "我是" to "身份",
+            "我最" to "偏好"
         )
         for ((trigger, category) in patterns) {
             if (text.contains(trigger)) {
-                val value = text.substringAfter(trigger).take(20)
+                val value = text.substringAfter(trigger).take(20).trim()
                 if (value.isNotBlank()) {
-                    KnowledgeBase.learn("${category}_${value.take(10)}", "$trigger$value", 0.7f)
+                    KnowledgeBase.learn("${category}_${value.take(10)}", value, 0.7f)
                 }
             }
         }
@@ -116,7 +144,7 @@ class SoulTestActivity : AppCompatActivity() {
 
         chatContainer.addView(bubble)
         scrollChat.post { scrollChat.fullScroll(View.FOCUS_DOWN) }
-    }
+}
 
     override fun onDestroy() {
         super.onDestroy()
