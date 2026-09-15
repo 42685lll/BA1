@@ -14,8 +14,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.starhoshino.R
 import com.example.starhoshino.core.*
-import java.text.SimpleDateFormat
-import java.util.*
 
 class SoulTestActivity : AppCompatActivity() {
 
@@ -28,7 +26,6 @@ class SoulTestActivity : AppCompatActivity() {
 
     private val chatContext = ChatContext(mutableListOf(), "")
     private val handler = Handler(Looper.getMainLooper())
-    private val dateFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,7 +70,7 @@ class SoulTestActivity : AppCompatActivity() {
             BondSystem.onMessageExchanged()
 
             RecallEngine.addMemory(
-                summary = "用户说：$text | 星野回：$reply",
+                summary = reply,
                 emotion = strategy.emotion,
                 keywords = text.split(" ").take(5)
             )
@@ -104,7 +101,7 @@ class SoulTestActivity : AppCompatActivity() {
         params.setMargins(16, 8, 16, 8)
         bubble.layoutParams = params
         bubble.setPadding(24, 16, 24, 16)
-        bubble.text = "[${dateFormat.format(Date())}] $text"
+        bubble.text = text
         bubble.textSize = 14f
 
         if (isUser) {
