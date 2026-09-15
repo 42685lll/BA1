@@ -97,7 +97,10 @@ class SoulTestActivity : AppCompatActivity() {
 
     private fun addBubble(text: String, isUser: Boolean) {
         val bubble = TextView(this)
-        val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
         params.setMargins(16, 8, 16, 8)
         bubble.layoutParams = params
         bubble.setPadding(24, 16, 24, 16)
@@ -110,7 +113,7 @@ class SoulTestActivity : AppCompatActivity() {
             (bubble.layoutParams as LinearLayout.LayoutParams).gravity = android.view.Gravity.END
         } else {
             bubble.setBackgroundResource(R.drawable.bubble_hoshino)
-            bubble.setTextColor(0xFFF0F5.toInt())
+            bubble.setTextColor(0xFFFFFFFF.toInt())
             (bubble.layoutParams as LinearLayout.LayoutParams).gravity = android.view.Gravity.START
         }
 
